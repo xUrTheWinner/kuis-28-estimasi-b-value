@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Simulasi b-value Gutenberg-Richter</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+:root{--bg:#eef1f4;--panel:#fff;--ink:#16263a;--mute:#5d6b7b;--line:#cfd7e0;--trace:#c8321e;--fit:#1f5fae;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1822;--panel:#16222f;--ink:#e6edf4;--mute:#93a2b3;--line:#2a3a4c;--trace:#ff6a52;--fit:#6aaaf0}}
+:root[data-theme="dark"]{--bg:#0f1822;--panel:#16222f;--ink:#e6edf4;--mute:#93a2b3;--line:#2a3a4c;--trace:#ff6a52;--fit:#6aaaf0}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:clamp(1.5rem,4vw,2.1rem);margin:0 0 4px;font-weight:600}
+.sub{color:var(--mute);margin:0 0 20px;max-width:62ch}
+.grid{display:grid;grid-template-columns:260px 1fr;gap:16px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px}
+label{display:block;font-size:.9rem;color:var(--mute);margin-top:12px}
+label:first-child{margin-top:0}
+label b{color:var(--ink);font-weight:600;float:right}
+input[type=range]{width:100%;accent-color:var(--fit)}
+input[type=number]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink);font:inherit}
+button{margin-top:16px;width:100%;padding:10px;border:0;border-radius:4px;background:var(--trace);color:#fff;font:600 1rem inherit;font-family:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--fit);outline-offset:2px}
+.res{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
+.res div{border-left:3px solid var(--trace);padding-left:10px}
+.res span{display:block;font-size:.8rem;color:var(--mute)}
+.res strong{font-size:1.5rem;font-weight:600}
+svg{width:100%;height:auto;display:block}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9rem;margin-top:12px}
+th,td{text-align:right;padding:4px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--mute);font-weight:400}
+.legend{font-size:.85rem;color:var(--mute);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--trace);margin:0 4px 0 0}
+.legend i.l{width:16px;height:3px;border-radius:0;background:var(--fit);vertical-align:middle;margin-left:12px}
+</style>
+</head>
+<body>
+<main>
+<h1>Estimasi b-value Gutenberg-Richter</h1>
+<p class="sub">Bangkitkan katalog gempa sintetis, hitung N(≥M) per bin, lalu regresikan log₁₀N = a − bM. Ubah parameter dan lihat seberapa dekat estimasi dengan b sebenarnya.</p>
+<div class="grid">
+  <section class="panel" aria-label="Parameter">
+    <label>Jumlah data <b id="vn"></b><input id="n" type="range" min="20" max="2000" step="10" value="120"></label>
+    <label>Mmin <b id="vm"></b><input id="mmin" type="range" min="0" max="4" step="0.1" value="2"></label>
+    <label>b sebenarnya <b id="vb"></b><input id="bt" type="range" min="0.5" max="1.5" step="0.05" value="1"></label>
+    <label>Lebar bin <b id="vw"></b><input id="bw" type="range" min="0.05" max="0.5" step="0.05" value="0.1"></label>
+    <label for="seed">Seed</label><input id="seed" type="number" value="42">
+    <button id="go" type="button">Bangkitkan ulang</button>
+  </section>
+  <section class="panel" aria-label="Hasil">
+    <div class="res">
+      <div><span>Estimasi b</span><strong id="rb">–</strong></div>
+      <div><span>Estimasi a</span><strong id="ra">–</strong></div>
+      <div><span>b sebenarnya</span><strong id="rt">–</strong></div>
+    </div>
+    <svg id="chart" viewBox="0 0 640 360" role="img" aria-label="Grafik log10 N terhadap magnitudo"></svg>
+    <div class="legend"><i></i>log₁₀ N(≥M)<i class="l"></i>regresi linier</div>
+    <p style="margin:12px 0 0;color:var(--mute);font-size:.9rem">3 nilai pertama N(≥M): <b id="first" style="color:var(--ink)"></b></p>
+    <div class="tw"><table id="tbl"></table></div>
+  </section>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+// PRNG bersifat deterministik (mulberry32) agar seed yang sama menghasilkan data yang sama
+function rng(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+function simulate(){
+  const n=+$('n').value,Mmin=+$('mmin').value,bt=+$('bt').value,w=+$('bw').value,seed=+$('seed').value||0;
+  $('vn').textContent=n;$('vm').textContent=Mmin.toFixed(1);$('vb').textContent=bt.toFixed(2);$('vw').textContent=w.toFixed(2);
+  const r=rng(seed);
+  // 1. M = Mmin + Exponential(1 / (b ln10))  -> Gutenberg-Richter
+  const M=Array.from({length:n},()=>Mmin-Math.log(1-r())/(bt*Math.LN10));
+  // 2. histogram per bin, lalu kumulatif dari belakang
+  const Mmax=Math.max(...M),nb=Math.floor((Mmax-Mmin)/w)+1;
+  const cnt=new Array(nb).fill(0);
+  M.forEach(m=>cnt[Math.min(nb-1,Math.floor((m-Mmin)/w))]++);
+  const N=new Array(nb);let run=0;
+  for(let i=nb-1;i>=0;i--){run+=cnt[i];N[i]=run}
+  const pts=[];
+  for(let i=0;i<nb;i++)if(N[i]>0)pts.push({m:+(Mmin+i*w).toFixed(4),N:N[i],y:Math.log10(N[i])});
+  // 3. regresi linier (setara np.polyfit(M_bins, log10N, 1))
+  const k=pts.length,sx=pts.reduce((s,p)=>s+p.m,0),sy=pts.reduce((s,p)=>s+p.y,0);
+  const sxx=pts.reduce((s,p)=>s+p.m*p.m,0),sxy=pts.reduce((s,p)=>s+p.m*p.y,0);
+  const slope=(k*sxy-sx*sy)/(k*sxx-sx*sx),a=(sy-slope*sx)/k,b=-slope;
+  // 4. tampilkan
+  $('rb').textContent=b.toFixed(4);$('ra').textContent=a.toFixed(4);$('rt').textContent=bt.toFixed(2);
+  $('first').textContent='['+pts.slice(0,3).map(p=>p.N).join(', ')+']';
+  $('tbl').innerHTML='<tr><th>M</th><th>N(≥M)</th><th>log₁₀N</th></tr>'+pts.slice(0,5).map(p=>`<tr><td>${p.m.toFixed(2)}</td><td>${p.N}</td><td>${p.y.toFixed(3)}</td></tr>`).join('');
+  draw(pts,slope,a);
+}
+
+function draw(pts,slope,a){
+  const W=640,H=360,L=48,R=16,T=12,B=40;
+  const x0=pts[0].m,x1=pts[pts.length-1].m||x0+1,xr=(x1-x0)||1;
+  const ymax=Math.ceil(pts[0].y*10)/10,ymin=0,yr=(ymax-ymin)||1;
+  const X=v=>L+(v-x0)/xr*(W-L-R),Y=v=>T+(1-(v-ymin)/yr)*(H-T-B);
+  let s='';
+  for(let i=0;i<=4;i++){
+    const v=ymin+yr*i/4,y=Y(v);
+    s+=`<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${L-6}" y="${y+4}" text-anchor="end" font-size="11" fill="var(--mute)">${v.toFixed(1)}</text>`;
+    const mv=x0+xr*i/4;
+    s+=`<text x="${X(mv)}" y="${H-B+16}" text-anchor="middle" font-size="11" fill="var(--mute)">${mv.toFixed(1)}</text>`;
+  }
+  s+=`<text x="${(L+W-R)/2}" y="${H-6}" text-anchor="middle" font-size="12" fill="var(--mute)">Magnitudo M</text>`;
+  s+=`<text transform="translate(12 ${(T+H-B)/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="var(--mute)">log₁₀ N(≥M)</text>`;
+  s+=`<line x1="${X(x0)}" y1="${Y(a+slope*x0)}" x2="${X(x1)}" y2="${Y(a+slope*x1)}" stroke="var(--fit)" stroke-width="2"/>`;
+  s+=pts.map(p=>`<circle cx="${X(p.m)}" cy="${Y(p.y)}" r="3.5" fill="var(--trace)"><title>M ${p.m.toFixed(2)}: N=${p.N}</title></circle>`).join('');
+  $('chart').innerHTML=s;
+}
+
+['n','mmin','bt','bw','seed'].forEach(id=>$(id).addEventListener('input',simulate));
+$('go').addEventListener('click',()=>{$('seed').value=Math.floor(Math.random()*100000);simulate()});
+simulate();
+</script>
+</body>
+</html>
